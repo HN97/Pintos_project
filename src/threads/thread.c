@@ -28,6 +28,9 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+/* List of all threads in sleep state. */
+static struct list sleep_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -92,6 +95,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&sleep_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -582,3 +586,52 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* Compare sleep tick between threads.
+   Used by thread_sleep to sort sleep list. */
+static bool 
+cmp_time (struct list_elem *one, struct list_elem *two, void *aux)
+{
+  struct thread *fthread = list_entry (one, struct thread, elem);
+  struct thread *sthread = list_entry (two, struct thread, elem);
+
+  return fthread->sleep_tick < sthread->sleep_tick;
+}
+
+/* The current thread sleep during ticks and 
+   will be scheduled again immediately at timeout. */
+void 
+thread_sleep (int64_t ticks) 
+{
+  struct thread *cur = thread_current ();
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+  cur->sleep_tick = ticks;
+  list_insert_ordered (&sleep_list, &cur->elem, cmp_time, NULL);
+  thread_block();
+
+  intr_set_level (old_level);
+}
+
+/* Remove threads from the sleep list and 
+   it will be scheduled again immediately at timeout. */
+void 
+thread_wakeup (int64_t cur_ticks)
+{
+  struct list_elem *head;
+  struct thread *fthread;
+
+  while(!list_empty(&sleep_list))
+  {
+    head = list_front(&sleep_list);
+    fthread = list_entry (head, struct thread, elem);
+
+    if(fthread->sleep_tick > cur_ticks )
+      break;
+
+    list_remove (head);
+    thread_unblock(fthread);
+  }
+
+}
